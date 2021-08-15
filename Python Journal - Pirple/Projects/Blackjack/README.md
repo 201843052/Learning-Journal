@@ -1,0 +1,2 @@
+# Learning-Journal
+This is the second coding project. This is quite a difficult one for me, as this required compilation of all the coding knowledge, including classes, while loops, I/O, lists, dictionaries, the random package and time package, error handling, variables and functions, and many more. As per the tradition of user friendly print functions, enjoy the game!
