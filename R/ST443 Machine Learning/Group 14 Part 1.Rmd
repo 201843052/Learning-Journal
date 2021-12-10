@@ -1,0 +1,458 @@
+---
+title: "ST443"
+author: "Suzanne Ajayi"
+date: "27/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(imbalance)
+library(performanceEstimation)
+library(randomForest)
+library(varImp)
+library(pROC)
+library(ROCR)
+library(SHAPforxgboost)
+library(xgboost)
+```
+
+# Data Visualization 
+```{r drop some features}
+library(dplyr)
+library(ggplot2)
+
+df=read.csv("US_Accidents_Dec20_updated.csv")
+options(scipen=999)
+df$Severity=as.factor(df$Severity)
+
+#drop some useless feature
+df=subset(df, select=-c(ID,Description,Number,End_Lat, End_Lng,Country,Turning_Loop,Wind_Chill.F.))
+df$Precipitation.in.[is.na(df$Precipitation.in.)] = 0
+df=na.omit(df)
+```
+
+
+```{r drop some features}
+#severity
+ggplot(df,aes(x=Severity))+theme_bw()+geom_bar(aes()) +labs(y = "Count")
+prop.table(table(df$Severity))
+```
+
+
+```{r drop some features}
+#state
+state_severity=data.frame(table(df$State,df$Severity))
+colnames(state_severity)<-c("State","Severity","Count")
+reorderstate= transform(state_severity, State = reorder(State, -Count))
+ggplot(reorderstate,aes(State,Count,fill=Severity))+geom_bar(stat = 'identity')
+```
+
+
+```{r drop some features}
+#map
+
+ggplot(df,aes(Start_Lng,Start_Lat,colour = Severity))+geom_point()
+```
+
+
+```{r drop some features}
+#date
+df$Weekday <- weekdays(as.Date(df$Start_Time))
+ggplot(df, aes(x = Weekday))+ 
+  geom_bar(aes()) +
+  ggtitle("distribution in week")
+```
+
+
+```{r drop some features}
+#hours
+time=data.frame(table(df$Sunrise_Sunset,df$Severity))
+colnames(time)<-c("daynight","Severity","Accidents")
+time <- time[-which(time$daynight == ""), ]
+ggplot(time,aes(daynight,Accidents,fill=Severity))+
+  geom_bar(stat = 'identity')
+```
+
+
+```{r drop some features}
+#humidity
+ggplot(df, aes(Severity, Humidity...,fill=Severity))+
+  geom_violin(trim=FALSE)+
+  geom_boxplot(width=0.1)  
+
+```
+
+
+```{r drop some features}
+df = read.csv('US_Accidents_Dec20_updated.csv')
+dim(df)
+table(df$Severity)
+df$Start_Time = as.Date(df$Start_Time, format = "%Y-%m-%d")
+df$Year = as.numeric(format(df$Start_Time, "%Y"))
+year = (df$Year == 2016)
+df = df[year,]
+
+keep = c("Severity", 'Temperature.F.', 'Humidity...', 'Pressure.in.', 'Visibility.mi.',
+        'Wind_Speed.mph.', 'Amenity', 'Bump', 'Crossing', 'Give_Way', 
+        'Junction', 'No_Exit', 'Railway', 'Roundabout', 'Station', 'Stop', 'Traffic_Calming', 'Traffic_Signal',
+        'Turning_Loop')
+df = df[keep]
+df = na.omit(df)
+dim(df)
+
+df$Amenity = as.integer(as.logical(df$Amenity))
+df$Junction = as.integer(as.logical(df$Junction))
+df$Bump = as.integer(as.logical(df$Bump))
+df$Crossing = as.integer(as.logical(df$Crossing))
+df$Give_Way = as.integer(as.logical(df$Give_Way))
+df$No_Exit = as.integer(as.logical(df$No_Exit))
+df$Railway = as.integer(as.logical(df$Railway))
+df$Roundabout = as.integer(as.logical(df$Roundabout))
+df$Station = as.integer(as.logical(df$Station))
+df$Stop = as.integer(as.logical(df$Stop))
+df$Traffic_Calming = as.integer(as.logical(df$Traffic_Calming))
+df$Traffic_Signal = as.integer(as.logical(df$Traffic_Signal))
+df$Turning_Loop = as.integer(as.logical(df$Turning_Loop))
+
+table(df$Severity)
+# After filtering date for 2016, choosing columns and removing na values, there are no more Severity with class 1. 
+
+# Combine class 3 and 4 to make binary classification 
+df$Severity[df$Severity == 4] = 3
+
+df$Severity = as.factor(df$Severity)
+#df[,"Severity"] = factor(df[,"Severity"])
+
+```
+
+
+Split into train and test datasets
+```{r setup, include=FALSE}
+# Make sample size 70% of dataset
+s_size <- floor(0.7*nrow(df))
+
+# Set seed for reproducibility
+set.seed(35)
+train_i <- sample(seq_len(nrow(df)), size = s_size)
+df_train <- df[train_i, ]
+df_test <- df[-train_i, ]
+print(dim(df_train))
+print(dim(df_test))
+
+# Drop non numeric variables since converting to dummies will create far too many features
+#drop = c("State", "City", "Weather_Condition", "Sunrise_Sunset","Civil_Twilight", "Nautical_Twilight","Astronomical_Twilight")
+#df2 = df[,!names(df) %in% drop]
+#df_train <- df[train_i, ]
+#df_test <- df[-train_i, ]
+#print(dim(df_test))
+#print(dim(df_train))
+```
+# Balance the training dataset labels by undersampling 
+Initially oversampled but this created many observations that made running time very slow.
+```{r }
+table(df_train$Severity)
+prop.table(table(df_train$Severity)) # Check classes distribution
+
+table(df_train$Severity)
+prop.table(table(df_train$Severity))
+head(df_train)
+
+# Balance data using SMOTE 
+df_train_bal <- smote(Severity ~ ., df_train, perc.over = 1,perc.under=2) #(oversample)
+df_train_bal2 <- smote(Severity ~ ., df_train, perc.over = 0.5, perc.under=1) #(undersample)
+table(df_train$Severity)
+table(df_train_bal2$Severity)
+
+# Remove last observations to further balance the label and ensure number of observations is not too high such that the running time is too long
+df_train_bal3 = head(df_train_bal2, -20400)
+#print(dim(df_train_bal2))
+table(df_train_bal$Severity)
+table(df_train_bal3$Severity)
+print(dim(df_test))
+```
+
+
+#Logistic Regression
+```{r pressure, echo=FALSE}
+# Fit a generalized linear regression using a logit link function
+# Distribution of the response variable is set to be binomial
+
+# Original dataset (unbalanced)
+glm_fit = glm(Severity ~.,
+              data = df_train, family = binomial)
+summary(glm_fit)
+glm_probs = predict(glm_fit, df_test[,-1], type = "response") 
+
+contrasts(df_train$Severity)
+glm_pred = rep(2, 31464)
+# For predicted probabilities greater than 0.5, assign Y to be 3; otherwise assign Y to be 2
+# 3 means severe, 2 means not severe
+glm_pred[glm_probs > 0.5] = 3  
+
+table(glm_pred)
+
+# Plot ROC curve
+lr_roc = roc(response = df_test$Severity, predictor = glm_probs)
+plot(lr_roc)
+cat("AUC: ", auc(lr_roc))
+
+# Confusion matrix
+table(glm_pred, df_test$Severity)
+mean(glm_pred == df_test$Severity) #accuracy 
+mean(glm_pred != df_test$Severity) #error
+
+```
+
+
+```{r pressure, echo=FALSE}
+# Balanced dataset (undersampled)
+glm_fitb = glm(Severity ~ .,
+              data = df_train_bal3, family = binomial)
+summary(glm_fitb)
+glm_probs_bal = predict(glm_fitb, df_test[,-1], type = "response") 
+glm_probs_bal[1:10]
+
+contrasts(df_train_bal3$Severity)
+glm_pred_bal = rep("2", 31464)
+
+glm_pred_bal[glm_probs_bal > .5] = "3"  
+
+# Confusion matrix
+table(glm_pred_bal, df_test$Severity)
+mean(glm_pred_bal == df_test$Severity) #accuracy 
+mean(glm_pred_bal != df_test$Severity) #error
+s = df_test$Severity
+
+#Plot ROC curve for Logistic Regression
+lr_roc = roc(response = df_test$Severity, predictor = glm_probs_bal)
+plot(lr_roc)
+cat("AUC: ", auc(lr_roc))
+```
+
+
+```{r pressure, echo=FALSE}
+# Balanced dataset (oversampled)
+glm_fitb = glm(Severity ~ .,
+              data = df_train_bal, family = binomial)
+summary(glm_fitb)
+glm_probs_bal = predict(glm_fitb, df_test[,-1], type = "response") 
+glm_probs_bal[1:10]
+
+contrasts(df_train_bal2$Severity)
+glm_pred_bal = rep("2", 31464)
+
+glm_pred_bal[glm_probs_bal > .5] = "3"  
+
+# Confusion matrix
+table(glm_pred_bal, df_test$Severity)
+mean(glm_pred_bal == df_test$Severity) #accuracy 
+mean(glm_pred_bal != df_test$Severity) #error
+
+
+#Plot ROC curve for Logistic Regression
+lr_roc = roc(response = df_test$Severity, predictor = glm_probs_bal)
+plot(lr_roc)
+cat("AUC: ", auc(lr_roc))
+```
+
+# Group LASSO for variable selection
+```{r pressure, echo=FALSE}
+library(gglasso)
+
+X = model.matrix(Severity~., data=df_train_bal3)[,-1]
+train_matrix = model.matrix(Severity~., data=df_train_bal3)
+
+y = as.numeric(df_train_bal3$Severity)
+ytest_matrix = as.numeric(df_test$Severity)
+
+# Group Lasso
+gr.lasso = gglasso(X, y)
+par(mfrow = c(1,2))
+plot(gr.lasso, xvar="lambda", label = T)
+
+group = seq.int(1,18)
+cv.lasso <-cv.gglasso(X, y, group = group)
+plot(cv.lasso)
+
+# Select lambda from the 1 SE rule
+cv.lasso$lambda.1se 
+
+# Run Group Lasso with the selected lambda
+gr.lasso.1se = gglasso(X, y, group= group, lambda=cv.lasso$lambda.1se)
+
+coef(gr.lasso.1se)
+
+## Validation set approach to select best lambda in Lasso
+set.seed(33)
+train <-sample(seq(263), 180, replace=FALSE)
+lasso.train <-gglasso(X[train,], y[train])
+
+pred.test <-predict(lasso.train, X[-train,])
+dim(pred.test)
+```
+# Random Forest Classification
+Use RFC to find most important features
+```{r}
+# Fit dataset to random forest algorithm
+rfc = randomForest(Severity~., data=df_train_bal3, importance = T)
+rfc_predict = predict(rfc, df_test[,-1], type = "prob")[,2] # Select one of the columns since it gives the information it gives is exhaustive
+
+# Plot ROC curve
+rf_roc = roc(Severity~., data = df_train_bal3)
+rf_roc = roc(response = df_test$Severity, predictor = rfc_predict)
+plot(rf_roc)
+cat("AUC: ", auc(rf_roc))
+
+# Plot Random foreest algorithm. Will see how it performs with different number of trees
+#plot(rfc, log="y")
+
+# Extract important scores from the importance function for random forest
+imp_scores = importance(rfc)
+
+# Plot top 10 important features
+varImpPlot(rfc,
+           sort = T,
+           n.var = 10,
+           main = "Top 10 Feature Importance")
+imp_scores[order()]
+imp_scores
+```
+# XGBoost
+```{r}
+#library(shapr)
+X = model.matrix(Severity~., data=df_train_bal3)
+#y = as.numeric(df_train_bal3$Severity)
+
+test_data = model.matrix(Severity~., data=df_test)
+#ytest = as.numeric(df2_test$Severity)
+
+xgb = xgboost(data=X, label = df_train_bal3$Severity, nround=20)
+shap = shap.values(xgb_model = xgb, X_train = X)
+shap$mean_shap_score
+
+shap_long <- shap.prep(xgb_model = xgb, X_train = X)
+shap.plot.summary(shap_long)
+
+
+xgb_predict = predict(xgb, test_data, type = "response")
+
+xgb_roc = roc(response = df_test$Severity, predictor = xgb_predict)
+plot(xgb_roc)
+cat("AUC: ", auc(xgb_roc))
+```
+As you can see from the SHAP plot above, ['Temperature.F.', 'Humidity...', 'Pressure.in.', 'Wind_Speed.mph.', 'Junction'] are the most important features, so will use these for future models.
+
+# SVM 
+```{r pressure, echo=FALSE}
+library(e1071)
+
+selected_features = c('Severity', 'Temperature.F.', 'Humidity...', 'Pressure.in.', 'Wind_Speed.mph.', 'Junction')
+df_reduced_train = df_train_bal3[,selected_features]
+df_reduced_test = df_test[,selected_features]
+X_reduced_test = df_reduced_test[,-1]
+y_reduced_test = df_reduced_test$Severity
+
+
+ans = svm(Severity~., data =df_reduced_train, cost = 10)
+summary(ans)
+#table(ans$fitted, dat$y)
+
+
+svm_pred = predict(ans, newdat = X_reduced_test, type = "response")
+table(svm_pred, y_reduced_test)
+
+svm_roc = roc(response = y_reduced_test, predictor = as.numeric(svm_pred))
+plot(svm_roc)
+cat("AUC: ", auc(svm_roc))
+
+# Confusion matrix
+table(svm_pred, y_reduced_test)
+mean(svm_pred == y_reduced_test) #accuracy 
+mean(svm_pred != y_reduced_test)  #error
+```
+# Logistic regression again with selected predictors from XGBoost
+```{r pressure, echo=FALSE}
+#Logistic Regression
+
+glm_fit2 = glm(Severity ~.,
+              data = df_reduced_train, family = binomial)
+summary(glm_fit2)
+glm_probs2 = predict(glm_fit2, df_reduced_test, type = "response") 
+
+contrasts(df_reduced_train$Severity)
+glm_pred2 = rep(2, 31464)
+# For predicted probabilities greater than 0.5, assign Y to be 3; otherwise assign Y to be 2
+# 3 means severe, 2 means not severe.
+glm_pred2[glm_probs2 > 0.5] = 3  
+
+table(glm_pred2)
+
+lr2_roc = roc(response = y_reduced_test, predictor = glm_probs2)
+plot(lr2_roc)
+cat("AUC: ", auc(lr2_roc))
+
+# Confusion matrix
+table(glm_pred2, y_reduced_test)
+mean(glm_pred2 == y_reduced_test) #accuracy 
+mean(glm_pred2 != y_reduced_test)  #error
+```
+
+
+# Logistic regression again with selected predictors from Random Forest
+Features: ['Temperature.F.',' Humidity...', 'Pressure.in.', 'Visibility.mi.','Wind_Speed.mph.']   
+
+In comparing accuracy and error, can see that features from XGBoost are slightly better.
+```{r pressure, echo=FALSE}
+#Logistic Regression
+library(MLmetrics)
+selected_featuresrf = c('Severity','Temperature.F.','Humidity...', 'Pressure.in.', 'Visibility.mi.','Wind_Speed.mph.')
+df_reduced_trainrf = df_train_bal3[,selected_featuresrf]
+df_reduced_testrf = df_test[,selected_featuresrf]
+X_reduced_testrf = df_reduced_testrf[,-1]
+y_reduced_testrf = df_reduced_testrf$Severity
+
+glm_fit3 = glm(Severity ~.,
+              data = df_reduced_trainrf, family = binomial)
+summary(glm_fit3)
+glm_probs3 = predict(glm_fit3, df_reduced_testrf, type = "response") 
+
+contrasts(df_reduced_trainrf$Severity)
+glm_pred3 = rep(2, 31464)
+# For predicted probabilities greater than 0.5, assign Y to be 3; otherwise assign Y to be 2
+# 3 means severe, 2 means not severe.
+glm_pred3[glm_probs3 > 0.5] = 3  
+
+table(glm_pred3)
+
+lr3_roc = roc(response = y_reduced_testrf, predictor = glm_probs3)
+plot(lr3_roc)
+cat("AUC: ", auc(lr3_roc))
+#cat('f1 score: ', F1_Score(glm_probs3, y_reduced_testrf))
+
+# Confusion matrix
+table(glm_pred3, y_reduced_testrf)
+mean(glm_pred3 == y_reduced_testrf) #accuracy 
+mean(glm_pred3 != y_reduced_testrf)  #error
+
+```
+```{r}
+plot(lr2_roc)
+lines(svm_roc, col = 'green')
+lines(xgb_roc, col = 'blue')
+lines(rf_roc, col = 'red')
+legend(x = 'bottomright', legend = c("Logistic Regression", "Support Vector Machines", "XGBoost", "Random Forest"), col=c('black', 'green', 'blue','red'), lty=1, cex=0.8)
+title("ROC Curve")
+
+cat("Random Forest AUC: ", auc(rf_roc),'\n')
+cat("XGBoost AUC: ", auc(xgb_roc))
+```
+
+# Factor Analysis of Mixed Data (FAMD)
+```{r}
+library("FactoMineR")
+library("factoextra")
+
+famd = FAMD(df_train_bal3)
+print(famd)
+```

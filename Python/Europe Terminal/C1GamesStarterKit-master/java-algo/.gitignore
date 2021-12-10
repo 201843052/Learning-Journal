@@ -1,0 +1,6 @@
+.gradle
+.idea
+*.jar
+build/*
+!build/docs
+out
