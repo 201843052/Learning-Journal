@@ -62,7 +62,7 @@ sudo apt install github-desktop
 ```
 After succesful install, launch it by typing
 ```console
-github-desktop.
+github-desktop
 ```
 
 ## R (Newest Version)
