@@ -50,7 +50,7 @@ To launch Intellij, navigate to /snap/intellij-idea-community/323/bin/ using "cd
 ./idea.sh
 ```
 
-## GitHub Desktop (Unstable, follow other tutorial to directly interact with GitHub using Terminal)
+## GitHub Desktop (Unstable, follow [other tutorial](./GitHub_manual.md) to directly interact with GitHub using Terminal)
 ```console
 wget -qO - https://packagecloud.io/shiftkey/desktop/gpgkey | sudo apt-key add -
 
